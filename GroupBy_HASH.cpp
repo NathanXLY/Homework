@@ -12,28 +12,35 @@
 using namespace std;
 
 #define BLOCK 1024*1024
-#define FLAGS O_WRONLY | O_CREAT | O_TRUNC
-#define MODE S_IRWXU | S_IXGRP | S_IROTH | S_IXOTH
+#define iterator_time 4
+#define cash_size 512
 int PNUM = 0;
 int LOOP = 0;
 char* NAME = NULL;
 
 int comm_sz;
 int my_rank;
-int totalSize;
+int64_t totalSize;
+int partialSize;
 int blockSize;
 int *mark;
 int *mark_collection;
+int iterator1;
 
-void readData(string path, int64_t *block)
+void readData(string path, int64_t *block, int size, int64_t offset)
 {
 	ifstream file(path.data(), ios_base::binary);
-	file.seekg(my_rank*blockSize * sizeof(int64_t));
-	file.read((char*)block, blockSize * sizeof(int64_t));
+	file.seekg(offset * sizeof(int64_t));
+	file.read((char*)block, size * sizeof(int64_t));
 	file.close();
 }
 
-
+void storeData(string path,int64_t *data,int size,int64_t offset){
+	ofstream out(path.data(),ios_base::binary);
+	out.seekg(offset*sizeof(int64_t));
+	out.write(data,size*sizeof(int64_t));
+	out.close();
+}
 void check(int64_t* data, int a, int b, int pnum)
 {
 	int k = a;
@@ -71,7 +78,7 @@ void quickSort(int64_t *A, int left, int right)
 	quickSort(A, low, right);
 }
 
-//ÓÃÓÚ²ÎÕÕÖ÷Ôª»®·ÖblockµÄº¯Êı£¬ÊäÈë£ºtemp£¬size£¬block£¬Êä³ö£ºnum_blockt
+//ç”¨äºå‚ç…§ä¸»å…ƒåˆ’åˆ†blockçš„å‡½æ•°ï¼Œè¾“å…¥ï¼štempï¼Œsizeï¼Œblockï¼Œè¾“å‡ºï¼šnum_blockt
 void judge1(int64_t *temp, int size, int64_t *block, int *&num_blockt)
 {
 	int begint = 0;
@@ -79,11 +86,11 @@ void judge1(int64_t *temp, int size, int64_t *block, int *&num_blockt)
 	{
 		if (temp[j] < block[k])
 		{
-			j++;//½øÈëÏÂÒ»¸öÖ÷ÔªÅĞ¶Ï
+			j++;//è¿›å…¥ä¸‹ä¸€ä¸ªä¸»å…ƒåˆ¤æ–­
 			begint = begint + num_blockt[j - 1];
 			if (j != comm_sz - 1)
-				num_blockt[j] = 0;//ÏÂÒ»¸öÖ÷ÔªÆ¬¶Î³¤¶È³õÊ¼Îª0
-			else if (k != size)//Ö÷Ôªµ½Í·£¬blockÎ´µ½Í·
+				num_blockt[j] = 0;//ä¸‹ä¸€ä¸ªä¸»å…ƒç‰‡æ®µé•¿åº¦åˆå§‹ä¸º0
+			else if (k != size)//ä¸»å…ƒåˆ°å¤´ï¼Œblockæœªåˆ°å¤´
 				num_blockt[j] = size - begint;
 		}
 		else
@@ -99,7 +106,7 @@ void judge1(int64_t *temp, int size, int64_t *block, int *&num_blockt)
 	}
 }
 
-//ÓÃÓÚ²¢ĞĞµÄ´¦Àí£¬judge1µÄÈÎÎñ£¬ÊäÈë£ºblockSize£¬temp£¬block£¬Êä³ö£ºnum_block
+//ç”¨äºå¹¶è¡Œçš„å¤„ç†ï¼Œjudge1çš„ä»»åŠ¡ï¼Œè¾“å…¥ï¼šblockSizeï¼Œtempï¼Œblockï¼Œè¾“å‡ºï¼šnum_block
 void judge2(int blockSize, int64_t *temp, int64_t *block, int *&num_block)
 {
 	int size = blockSize / PNUM;
@@ -115,7 +122,7 @@ void judge2(int blockSize, int64_t *temp, int64_t *block, int *&num_block)
 		else
 			judge1(temp, last, &block[i*size], num_blockt);
 
-		//½«ÖĞ¼ä±äÁ¿num_blocktµÄÖµ¸³¸ønum_block
+		//å°†ä¸­é—´å˜é‡num_blocktçš„å€¼èµ‹ç»™num_block
 		for (int j = 0; j < comm_sz; j++)
 		{
 #pragma omp atomic
@@ -131,10 +138,10 @@ void PSRS(int64_t* block, int64_t*& data)
 
 	begin_time = MPI_Wtime();
 
-	int64_t *temp = new int64_t[comm_sz*comm_sz];//´Óp¸ö´¦ÀíÆ÷ÖĞ·Ö±ğÌá³öµÄp¸öÊı¾İ
-	int diff = blockSize / (comm_sz + 1);//È¡Ö÷ÔªÊ±µÄ¼ä¸ô
+	int64_t *temp = new int64_t[comm_sz*comm_sz];//ä»pä¸ªå¤„ç†å™¨ä¸­åˆ†åˆ«æå‡ºçš„pä¸ªæ•°æ®
+	int diff = blockSize / (comm_sz + 1);//å–ä¸»å…ƒæ—¶çš„é—´éš”
 
-	quickSort(block, 0, blockSize - 1);//¿éÄÚ¿ìÅÅ
+	quickSort(block, 0, blockSize - 1);//å—å†…å¿«æ’
 
 	int64_t *tempt = new int64_t[comm_sz];
 
@@ -144,13 +151,13 @@ void PSRS(int64_t* block, int64_t*& data)
 	if (my_rank == 0)
 	{
 		quickSort(temp, 0, comm_sz*comm_sz - 1);
-		for (int i = 1; i < comm_sz; i++)//Ñ¡È¡p-1¸öÖ÷Ôª
-			temp[i - 1] = temp[i*(comm_sz - 1)];//tempµÄ0ÖÁcomm_sz-2´æcomm_sz-1¸öÓĞĞ§Ö÷Ôª
-												//store(temp, "blockÖ÷Ôª0.txt", comm_sz - 1);
+		for (int i = 1; i < comm_sz; i++)//é€‰å–p-1ä¸ªä¸»å…ƒ
+			temp[i - 1] = temp[i*(comm_sz - 1)];//tempçš„0è‡³comm_sz-2å­˜comm_sz-1ä¸ªæœ‰æ•ˆä¸»å…ƒ
+												//store(temp, "blockä¸»å…ƒ0.txt", comm_sz - 1);
 	}
 	MPI_Bcast(temp, comm_sz - 1, MPI_INT64_T, 0, MPI_COMM_WORLD);
 
-	//È«¾Ö½»»»Ë¼Â·£º´æ´¢Ã¿Ò»¶ÎµÄÊı¾İ¸öÊı
+	//å…¨å±€äº¤æ¢æ€è·¯ï¼šå­˜å‚¨æ¯ä¸€æ®µçš„æ•°æ®ä¸ªæ•°
 
 	int *num_block = new int[comm_sz];
 	int *begin = new int[comm_sz];
@@ -165,22 +172,22 @@ void PSRS(int64_t* block, int64_t*& data)
 	for (int i = 1; i < comm_sz; i++)
 		begin[i] = begin[i - 1] + num_block[i - 1];
 
-	//numÊÇÀ´×Ôcomm_sz¸ö½ø³ÌµÄ£¬Òª½ÓÊÕµÄÊı¾İÁ¿£¬Àı£ºnum[2]ÊÇ½ø³Ì2·¢À´µÄÊı¾İÁ¿
+	//numæ˜¯æ¥è‡ªcomm_szä¸ªè¿›ç¨‹çš„ï¼Œè¦æ¥æ”¶çš„æ•°æ®é‡ï¼Œä¾‹ï¼šnum[2]æ˜¯è¿›ç¨‹2å‘æ¥çš„æ•°æ®é‡
 	int *num = new int[comm_sz];
 	MPI_Alltoall(num_block, 1, MPI_INT, num, 1, MPI_INT, MPI_COMM_WORLD);
 	MPI_Barrier(MPI_COMM_WORLD);
 
-	//total£º¸Ã½ø³ÌÒª½ÓÊÕµÄÊı¾İ×ÜÁ¿£¬·½±ã´´½¨¶¯Ì¬Êı×é
+	//totalï¼šè¯¥è¿›ç¨‹è¦æ¥æ”¶çš„æ•°æ®æ€»é‡ï¼Œæ–¹ä¾¿åˆ›å»ºåŠ¨æ€æ•°ç»„
 	int total = 0;
 	for (int i = 0; i < comm_sz; i++)
 		total += num[i];
 
-	//new_block£º¸Ã½ø³Ì½ÓÊÕµ½µÄËùÓĞÊı¾İ
+	//new_blockï¼šè¯¥è¿›ç¨‹æ¥æ”¶åˆ°çš„æ‰€æœ‰æ•°æ®
 	int64_t *new_block = new int64_t[total];
 	int *recvDisp = new int[comm_sz];
 	recvDisp[0] = 0;
 
-	//recvDisp£º¸Ã½ø³ÌÃ¿´Î½ÓÊÕÊı¾İÊ±µÄÆ«ÒÆÁ¿
+	//recvDispï¼šè¯¥è¿›ç¨‹æ¯æ¬¡æ¥æ”¶æ•°æ®æ—¶çš„åç§»é‡
 	for (int i = 1; i < comm_sz; i++)
 		recvDisp[i] = num[i - 1] + recvDisp[i - 1];
 
@@ -199,87 +206,225 @@ void PSRS(int64_t* block, int64_t*& data)
 			recvDisp[i] = num[i - 1] + recvDisp[i - 1];
 	}
 
-	//Ö÷½ø³ÌÊÕ¼¯×îÖÕÊı¾İ
+	//ä¸»è¿›ç¨‹æ”¶é›†æœ€ç»ˆæ•°æ®
 	MPI_Barrier(MPI_COMM_WORLD);
-	//MPI_Gatherv(new_block, total, MPI_INT64_T, data, num, recvDisp, MPI_INT64_T, 0, MPI_COMM_WORLD);
+	MPI_Gatherv(new_block, total, MPI_INT64_T, data, num, recvDisp, MPI_INT64_T, 0, MPI_COMM_WORLD);
 
-	mark = (int*)malloc(sizeof(int)*total);
-	mark[0] = 0;
-	for (int i = 1; i < total; i++) {
-		if (new_block[i] != new_block[i - 1]) {
-			new_block[i] = 1;
-		}
-		else {
-			new_block[i] = 0;
-		}
-	}
-	if (my_rank == 0) {
-		mark_collection = new int[totalSize];
-	}
-	MPI_Gatherv(mark, total, MPI_INT, mark_collection, num, recvDisp, MPI_INT, 0, MPI_COMM_WORLD);
+	// mark = (int*)malloc(sizeof(int)*total);
+	// mark[0] = 0;
+	// for (int i = 1; i < total; i++) {
+	// 	if (new_block[i] != new_block[i - 1]) {
+	// 		new_block[i] = 1;
+	// 	}
+	// 	else {
+	// 		new_block[i] = 0;
+	// 	}
+	// }
+	// if (my_rank == 0) {
+	// 	mark_collection = new int[partialSize];
+	// }
+	// MPI_Gatherv(mark, total, MPI_INT, mark_collection, num, recvDisp, MPI_INT, 0, MPI_COMM_WORLD);
 
-	printf("rank:%d Ç°×ººÍÊÕ¼¯µ½Ö÷½ø³Ì", my_rank);
+	// printf("rank:%d å‰ç¼€å’Œæ”¶é›†åˆ°ä¸»è¿›ç¨‹", my_rank);
 
-	if (my_rank == 0)
-	{
-		for (int i = 1; i < totalSize; i++) {
-			mark_collection[i] = mark_collection[i] + mark_collection[i - 1];
-		}
-		cout << "***********×î´ó·Ö×éÎª£º%d************" << mark_collection[totalSize - 1];
-	}
+	// if (my_rank == 0)
+	// {
+	// 	for (int i = 1; i < partialSize; i++) {
+	// 		mark_collection[i] = mark_collection[i] + mark_collection[i - 1];
+	// 	}
+	// 	cout << "***********æœ€å¤§åˆ†ç»„ä¸ºï¼š%d************" << mark_collection[partialSize - 1];
+	// }
+
 
 	end_time = MPI_Wtime();
-	/*if (my_rank == 0)
-	store(data, "total.txt", BLOCK*LOOP);*/
-
+	if (my_rank == 0){
+		char temp[10];
+		sprintf(a,"%d",iterator1);
+	    string ss;
+		ss.append("partialData_");
+		ss.append(a);
+		ss.append(".txt");
+		storeData(ss, data, BLOCK*LOOP,0);
+	}	
 }
 
-//ÊäÈë²ÎÊı£º½ø³ÌÊıPNUM£¬ÎÄ¼şÃûNAME£¬Ñ­»·´ÎÊıLOOP
+//è¾“å…¥å‚æ•°ï¼šè¿›ç¨‹æ•°PNUMï¼Œæ–‡ä»¶åNAMEï¼Œå¾ªç¯æ¬¡æ•°LOOP
+//æ•°æ®æ–‡ä»¶ä¸ºï¼š100G_File.txt
+//æ•°æ®æ–‡ä»¶å¤ªå¤§äº†ï¼Œè€ƒè™‘åˆ†å››æ¬¡å»è¯»
 int main(int argc, char* argv[])
 {
-	//Â·¾¶
+	//è·¯å¾„
 	if (argc != 5)
 	{
-		cout << "²ÎÊıÊıÄ¿²»¶Ô" << endl;
+		cout << "å‚æ•°æ•°ç›®ä¸å¯¹" << endl;
 		return 0;
 	}
-	PNUM = atoi(argv[1]); //Ïß³ÌÊı
-	char* path = argv[2]; //ÎÄ¼şÂ·¾¶
-	LOOP = atoi(argv[3]); //´óĞ¡
-
-	mark = (int*)malloc(totalSize * sizeof(int));//´æ´¢±êÖ¾ÓÃµÄ
+	PNUM = atoi(argv[1]); //çº¿ç¨‹æ•°
+	char* path = argv[2]; //æ–‡ä»¶
+	LOOP = atoi(argv[3]); //è¦è¯»çš„æ–‡ä»¶å¤§å°
+	iterator1=0;
 
 	MPI_Init(NULL, NULL);
 	MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
 	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 
-	totalSize = BLOCK*LOOP;
-	blockSize = totalSize / comm_sz;
-
-	char a[10];
+	totalSize=BLOCK*LOOP;
+	partialSize = totalSize/iterator_time;
+	blockSize = partialSize / comm_sz;
+	
 	int64_t *block = NULL;
 	int64_t *data = NULL;
-	data = (int64_t*)malloc(sizeof(int64_t)*totalSize);
-	block = (int64_t *)malloc(sizeof(int64_t)*blockSize);
-	readData(path, block);
+	//mark = (int*)malloc(partialSize * sizeof(int));//å­˜å‚¨æ ‡å¿—ç”¨çš„
 
-	if (comm_sz == 1)
-	{
-		double begin_time, end_time;
-		begin_time = MPI_Wtime();
-		quickSort(block, 0, blockSize - 1);
-		end_time = MPI_Wtime();
-		cout << "time: " << end_time - begin_time << endl;
-		cout << "data last: " << block[blockSize - 1] << endl;
+	for(int i=0;i<iterator_time;i++){
+		data = (int64_t*)malloc(sizeof(int64_t)*partialSize/iterator_time);
+		block = (int64_t *)malloc(sizeof(int64_t)*blockSize);
+	    readData(path, block,blockSize,my_rank*blockSize+partialSize*iterator1);
+
+		if (comm_sz == 1)
+		{
+			double begin_time, end_time;
+			begin_time = MPI_Wtime();
+			quickSort(block, 0, blockSize - 1);
+		}
+		else
+		{
+			iterator1++;
+			PSRS(block, data);
+		}
+		MPI_Barrier(MPI_COMM_WORLD);
+		delete[] data;
+		delete[] block;
 	}
-	else
-	{
-		PSRS(block, data);
+	//ç”Ÿæˆäº†iterator_numä¸ªpartialData_.txtä¸ªä¸´æ—¶æ–‡ä»¶
+	//ç¼©å°æˆ2ä¸ªæ–‡ä»¶
+	if(my_rank<(iterator_time/2)){
+		int time=partialSize/cash_size;
+		for(int i=0;i<time;i++){
+				int64_t *Four2twoCash1=(int64_t*)malloc(sizeof(int64_t)*cash_size*BLOCK);
+				int64_t *Four2twoCash2=(int64_t*)malloc(sizeof(int64_t)*cash_size*BLOCK);
+				int64_t *Four2twoCash3=(int64_t*)malloc(sizeof(int64_t)*cash_size*BLOCK*2);
+				int temp1=0,temp2=0,temp3=0;
+				char a[10];
+				sprintf(a,"%d",my_rank*2);
+				string ss;
+				ss.append("partialData_");
+				ss.append(a);
+				ss.append(".txt");
+				readData(ss.data(),Four2twoCash1,cash_size*BLOCK,i*cash_size*BLOCK);
+
+				char b[10];
+				sprintf(b,"%d",my_rank*2+1);
+				string ss1;
+				ss1.append("partialData_");
+				ss1.append(a);
+				ss1.append(".txt");
+				readData(ss1.data(),Four2twoCash2,cash_size*BLOCK,i*cash_size*BLOCK);
+
+				//ä¸¤ä¸ªç¼“å­˜åŒºåˆå¹¶æˆä¸€ä¸ª
+				for(int j=0;j<cash_size*BLOCK*2;j++){
+					if(temp1==cash_size*BLOCK){
+						if(temp2!=cash_size*BLOCK){
+							for(int z=temp2;z<cash_size*BLOCK;z++){
+								Four2twoCash3[i]=Four2twoCash2[z];
+							}
+							break;
+						}else{
+							break;
+						}
+					}
+					if(temp2==cash_size*BLOCK){
+						for(int z=temp1;z<cash_size*BLOCK;z++){
+							Four2twoCash3[i]=Four2twoCash1[z];
+						}
+					}
+					if(Four2twoCash1[temp1]<Four2twoCash2[temp2]){
+						Four2twoCash3[i]=Four2twoCash1[temp1];
+						temp1++;
+					}else{
+						Four2twoCash3[i]=Four2twoCash2[temp1];
+						temp2++;
+					}
+
+				char c[10];
+				sprintf(c,"%d",my_rank);
+				string ss2;
+				ss2.append("F2TData_");
+				ss2.append(c);
+				ss2.append(".txt");	
+				storeData(ss2,Four2twoCash3,cash_size*BLOCK*2,i*cash_size*BLOCK*2);
+				delete []Four2twoCash1;
+				delete []Four2twoCash2;
+				delete []Four2twoCash3;
+		}
 	}
 
-	//if(my_rank==0)
-	delete[] data;
-	delete[] block;
+	//ç¼©å°æˆ1ä¸ªæ–‡ä»¶
+	
+if(my_rank<(iterator_time/4)){
+		int time=partialSize*2/cash_size;
+		for(int i=0;i<time;i++){
+				int64_t *Four2twoCash1=(int64_t*)malloc(sizeof(int64_t)*cash_size*BLOCK);
+				int64_t *Four2twoCash2=(int64_t*)malloc(sizeof(int64_t)*cash_size*BLOCK);
+				int64_t *Four2twoCash3=(int64_t*)malloc(sizeof(int64_t)*cash_size*BLOCK*2);
+				int temp1=0,temp2=0,temp3=0;
+				char a[10];
+				sprintf(a,"%d",my_rank*2);
+				string ss;
+				ss.append("F2TData_");
+				ss.append(a);
+				ss.append(".txt");
+				readData(ss.data(),Four2twoCash1,cash_size*BLOCK,i*cash_size*BLOCK);
+
+				char b[10];
+				sprintf(b,"%d",my_rank*2+1);
+				string ss1;
+				ss1.append("F2TData_");
+				ss1.append(a);
+				ss1.append(".txt");
+				readData(ss1.data(),Four2twoCash2,cash_size*BLOCK,i*cash_size*BLOCK);
+
+				//ä¸¤ä¸ªç¼“å­˜åŒºåˆå¹¶æˆä¸€ä¸ª
+				for(int j=0;j<cash_size*BLOCK*2;j++){
+					if(temp1==cash_size*BLOCK){
+						if(temp2!=cash_size*BLOCK){
+							for(int z=temp2;z<cash_size*BLOCK;z++){
+								Four2twoCash3[i]=Four2twoCash2[z];
+							}
+							break;
+						}else{
+							break;
+						}
+					}
+					if(temp2==cash_size*BLOCK){
+						for(int z=temp1;z<cash_size*BLOCK;z++){
+							Four2twoCash3[i]=Four2twoCash1[z];
+						}
+					}
+					if(Four2twoCash1[temp1]<Four2twoCash2[temp2]){
+						Four2twoCash3[i]=Four2twoCash1[temp1];
+						temp1++;
+					}else{
+						Four2twoCash3[i]=Four2twoCash2[temp1];
+						temp2++;
+					}
+
+				
+				ss2.append("T2OData.txt");
+				storeData(ss2,Four2twoCash3,cash_size*BLOCK*2,i*cash_size*BLOCK*2);
+				delete []Four2twoCash1;
+				delete []Four2twoCash2;
+				delete []Four2twoCash3;
+		}
+	}
+
+	//è·å¾—äº†ä¸€ä¸ªé¡ºåºæ–‡ä»¶
+
+
+
+
+
+	}
 	MPI_Barrier(MPI_COMM_WORLD);
 	MPI_Finalize();
 
